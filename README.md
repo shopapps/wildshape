@@ -11,10 +11,10 @@ This makes it safer to use with both the 2014 and 2024 D&D sheets.
 
 ## Tylen setup
 
-The live game uses:
+The live game currently uses:
 
 - Journal folder: `Tylen`
-- Base characters: `Tylen` and `Tylen 2024`
+- Base character: `Tylen`
 - Animal copies: `Boar`, `Giant Constrictor Snake`, `Spider`, and `Wolf`
 
 The source characters named `Tylen - Animal` stay outside the folder.
@@ -23,7 +23,7 @@ After adding `src/wildshape.js` in Roll20's Mod Scripts page, run this once in
 chat as the GM:
 
 ```text
-!wildshape setup --folder "Tylen" --base "Tylen" --base "Tylen 2024"
+!wildshape setup --folder "Tylen" --base "Tylen"
 ```
 
 This adds these character Abilities:
@@ -35,6 +35,13 @@ This adds these character Abilities:
 - Wolf
 
 They also appear as token actions when the character's token is selected.
+
+`Tylen 2024` is not set up yet. To add it later while keeping the current
+buttons on `Tylen`, run:
+
+```text
+!wildshape setup --folder "Tylen" --base "Tylen" --base "Tylen 2024"
+```
 
 When the folder changes, the Mod tries to sync on its own. The GM can also run:
 
