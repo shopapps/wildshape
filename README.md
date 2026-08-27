@@ -9,6 +9,9 @@ sync, and its button goes away.
 The Mod changes the token only. It does not rewrite either character sheet.
 This makes it safer to use with both the 2014 and 2024 D&D sheets.
 
+When AI Co-GM Telemetry is installed, each successful form change is also sent
+to the campaign dashboard's **Latest** activity list.
+
 ## Tylen setup
 
 The live game currently uses:

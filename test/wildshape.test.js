@@ -35,6 +35,7 @@ function fakeRoll20() {
     const objects = new Map();
     const handlers = new Map();
     const chat = [];
+    const formChanges = [];
     const campaign = {
         journalfolder: "[]",
         playerpageid: "page-1"
@@ -78,6 +79,7 @@ function fakeRoll20() {
             handlers.set(event, callback);
         },
         playerIsGM: (playerId) => playerId === "gm",
+        reportFormChange: (change) => formChanges.push(change),
         sendChat: (who, message) => chat.push({ who, message }),
         setTimeout: (callback) => {
             callback();
@@ -88,7 +90,7 @@ function fakeRoll20() {
     add("player", "gm", { _displayname: "Paul", _lastpage: "page-1" });
     add("player", "player-1", { _displayname: "Tylen Player", _lastpage: "page-1" });
 
-    return { add, campaign, chat, env, handlers, objects };
+    return { add, campaign, chat, env, formChanges, handlers, objects };
 }
 
 function tokenData(name, imgsrc, represents, bar1Value) {
@@ -270,15 +272,31 @@ test("changes to an animal, returns to Human, and remembers each form's bars", a
     assert.equal(token.get("represents"), "wolf");
     assert.equal(token.get("name"), "Wolf");
     assert.equal(token.get("bar1_value"), 7);
+    assert.deepEqual(game.formChanges[0], {
+        playerId: "player-1",
+        pageId: "page-1",
+        characterId: "tylen-2014",
+        characterName: "Tylen",
+        tokenId: "token-1",
+        tokenName: "Wolf",
+        fromForm: "Human",
+        toForm: "Wolf"
+    });
 
     token.set("bar1_value", 3);
     await mod.shift(msg, "tylen", "human", "tylen-2014");
     assert.equal(token.get("represents"), "tylen-2014");
     assert.equal(token.get("name"), "Tylen");
     assert.equal(token.get("bar1_value"), 12);
+    assert.equal(game.formChanges[1].fromForm, "Wolf");
+    assert.equal(game.formChanges[1].toForm, "Human");
 
     await mod.shift(msg, "tylen", "wolf", "tylen-2014");
     assert.equal(token.get("bar1_value"), 3);
+    assert.equal(game.formChanges.length, 3);
+
+    await mod.shift(msg, "tylen", "wolf", "tylen-2014");
+    assert.equal(game.formChanges.length, 3);
 });
 
 test("does not change a token the player cannot control", async () => {

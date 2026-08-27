@@ -1,6 +1,6 @@
 {
   "name": "@shopapps/roll20-wildshape",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A small Roll20 Mod for changing a character token between wild shape forms.",
   "scripts": {

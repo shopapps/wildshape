@@ -9,7 +9,7 @@
     "use strict";
 
     const SCRIPT_NAME = "WildShape Next";
-    const VERSION = "0.3.0";
+    const VERSION = "0.4.0";
     const STATE_KEY = "WildShapeNext";
     const ABILITY_MARKER = "Managed by WildShape Next";
 
@@ -74,6 +74,7 @@
             log: env.log || function () {},
             on: env.on,
             playerIsGM: env.playerIsGM,
+            reportFormChange: env.reportFormChange || function () {},
             sendChat: env.sendChat,
             setTimeout: env.setTimeout || setTimeout,
             state: env.state
@@ -569,6 +570,10 @@
 
             saved.forms[saved.currentForm] = captureToken(token);
             saved.baseCharacterId = baseCharacterId;
+            const previousKey = saved.currentForm;
+            const previousForm = saved.currentForm.startsWith("human:")
+                ? "Human"
+                : api.getObj("character", saved.currentForm)?.get("name") || "Unknown";
             const targetKey = isHuman ? `human:${baseCharacterId}` : targetCharacter.id;
             const snapshot = saved.forms[targetKey] || await defaultSnapshot(targetCharacter);
             if (!validImage(snapshot)) {
@@ -578,6 +583,22 @@
             token.set(snapshot);
             saved.currentForm = targetKey;
             saved.forms[targetKey] = captureToken(token);
+            if (previousKey !== targetKey) {
+                try {
+                    api.reportFormChange({
+                        playerId: msg.playerid,
+                        pageId: token.get("_pageid"),
+                        characterId: baseCharacterId,
+                        characterName: api.getObj("character", baseCharacterId)?.get("name") || "Character",
+                        tokenId: token.id,
+                        tokenName: token.get("name"),
+                        fromForm: previousForm,
+                        toForm: isHuman ? "Human" : targetCharacter.get("name")
+                    });
+                } catch (error) {
+                    api.log(`${SCRIPT_NAME}: Could not report form change: ${error.message}`);
+                }
+            }
             whisper(msg.playerid, `${html(token.get("name"))} is now ${html(targetCharacter.get("name"))}.`);
             return token;
         }
@@ -695,6 +716,13 @@
             log,
             on,
             playerIsGM,
+            reportFormChange: function (change) {
+                if (typeof AICoGMTelemetry !== "undefined"
+                    && AICoGMTelemetry
+                    && typeof AICoGMTelemetry.formChanged === "function") {
+                    AICoGMTelemetry.formChanged(change);
+                }
+            },
             sendChat,
             setTimeout,
             state
