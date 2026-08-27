@@ -46,8 +46,14 @@ buttons on `Tylen`, run:
 When the folder changes, the Mod tries to sync on its own. The GM can also run:
 
 ```text
-!wildshape sync --group tylen
+!wildshape refresh Tylen
 ```
+
+This scans the `Tylen` folder again. It adds new form buttons and removes form
+buttons whose characters are no longer in the folder.
+
+The command starts with `!wildshape`, not `!ws`, because the older WildShape
+Mod already uses `!ws`.
 
 ## Safe behaviour
 

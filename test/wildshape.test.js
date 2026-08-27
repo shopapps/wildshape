@@ -146,9 +146,30 @@ test("parses quoted setup names and repeated base choices", () => {
             options: {
                 folder: "Tylen",
                 base: ["Tylen", "Tylen 2024"]
-            }
+            },
+            args: []
         }
     );
+});
+
+test("refresh command rescans the folder and removes stale buttons", async () => {
+    const game = tylenGame();
+    const mod = createWildShapeMod(game.env);
+    mod.setupGroup("Tylen", ["Tylen"]);
+
+    game.campaign.journalfolder = JSON.stringify([
+        { n: "Tylen", id: "folder-tylen", i: ["boar"] }
+    ]);
+    await mod.handleChat({
+        type: "api",
+        playerid: "gm",
+        content: "!wildshape refresh Tylen"
+    });
+
+    const names = game.env.findObjs({ _type: "ability", _characterid: "tylen-2014" })
+        .map((ability) => ability.get("name"));
+    assert.deepEqual(names, ["Human", "Boar"]);
+    assert.match(game.chat.at(-1).message, /Tylen buttons now match 1 animal form/);
 });
 
 test("adds Human and animal buttons to both base character sheets", () => {

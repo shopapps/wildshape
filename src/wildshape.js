@@ -9,7 +9,7 @@
     "use strict";
 
     const SCRIPT_NAME = "WildShape Next";
-    const VERSION = "0.1.0";
+    const VERSION = "0.2.0";
     const STATE_KEY = "WildShapeNext";
     const ABILITY_MARKER = "Managed by WildShape Next";
 
@@ -129,10 +129,12 @@
             tokens.shift();
             const command = (tokens.shift() || "help").toLowerCase();
             const options = {};
+            const args = [];
 
             while (tokens.length) {
                 const key = tokens.shift();
                 if (!key.startsWith("--")) {
+                    args.push(key);
                     continue;
                 }
 
@@ -143,7 +145,7 @@
                     : [].concat(options[name], value);
             }
 
-            return { command, options };
+            return { command, options, args };
         }
 
         function slug(value) {
@@ -532,7 +534,7 @@
             whisper(playerId,
                 "<b>WildShape Next</b><br>"
                 + "GM setup: <code>!wildshape setup --folder \"Tylen\" --base \"Tylen\" --base \"Tylen 2024\"</code><br>"
-                + "Refresh buttons: <code>!wildshape sync --group tylen</code>"
+                + "Refresh buttons: <code>!wildshape refresh Tylen</code>"
             );
         }
 
@@ -541,7 +543,7 @@
                 return;
             }
 
-            const { command, options } = parseCommand(msg.content);
+            const { command, options, args } = parseCommand(msg.content);
             try {
                 if (command === "help") {
                     help(msg.playerid);
@@ -562,16 +564,19 @@
                     );
                     return;
                 }
-                if (command === "sync") {
+                if (command === "sync" || command === "refresh") {
                     if (!api.playerIsGM(msg.playerid)) {
                         throw new Error("Only the GM can refresh setup.");
                     }
-                    const groupId = options.group;
-                    if (!groupId) {
-                        throw new Error("Sync needs --group.");
+                    const requestedGroup = options.group || args[0];
+                    if (!requestedGroup) {
+                        throw new Error("Refresh needs a folder or group name.");
                     }
+                    const groupId = slug(requestedGroup);
                     const forms = syncGroup(groupId);
-                    whisper(msg.playerid, `The buttons now match ${forms.length} animal form(s).`);
+                    whisper(msg.playerid,
+                        `The ${html(requestedGroup)} buttons now match ${forms.length} animal form(s).`
+                    );
                     return;
                 }
                 if (command === "shift") {
