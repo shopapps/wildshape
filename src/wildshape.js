@@ -3,13 +3,14 @@
  *
  * The Journal folder is the list of animal forms.
  * The Mod adds matching buttons to each base character.
- * It changes tokens only. It does not rewrite either character sheet.
+ * It changes tokens and keeps animal sheet control in step with the base sheet.
+ * It does not rewrite character stats.
  */
 (function () {
     "use strict";
 
     const SCRIPT_NAME = "WildShape Next";
-    const VERSION = "0.4.0";
+    const VERSION = "0.5.0";
     const STATE_KEY = "WildShapeNext";
     const ABILITY_MARKER = "Managed by WildShape Next";
 
@@ -283,6 +284,34 @@
             byName.forEach((ability) => ability.remove());
         }
 
+        function baseControllers(group) {
+            const playerIds = new Set();
+
+            group.baseCharacterIds.forEach((characterId) => {
+                const character = api.getObj("character", characterId);
+                String(character.get("controlledby") || "")
+                    .split(",")
+                    .map((playerId) => playerId.trim())
+                    .filter(Boolean)
+                    .forEach((playerId) => playerIds.add(playerId));
+            });
+
+            return playerIds.has("all") ? "all" : Array.from(playerIds).join(",");
+        }
+
+        function syncFormControllers(group, forms) {
+            if (!group.baseCharacterIds.length) {
+                return;
+            }
+
+            const controlledby = baseControllers(group);
+            forms.forEach((form) => {
+                if (String(form.get("controlledby") || "") !== controlledby) {
+                    form.set("controlledby", controlledby);
+                }
+            });
+        }
+
         function syncGroup(groupId) {
             const group = stateRoot().groups[groupId];
             if (!group) {
@@ -292,6 +321,7 @@
             const forms = characterForms(group.folder);
             group.formCharacterIds = forms.map((form) => form.id);
             group.baseCharacterIds = group.baseCharacterIds.filter((id) => api.getObj("character", id));
+            syncFormControllers(group, forms);
             group.baseCharacterIds.forEach((baseCharacterId) => syncAbilities(group, baseCharacterId, forms));
             return forms;
         }
@@ -381,7 +411,7 @@
 
             sheetsByPlayer.forEach((sheetNames, playerId) => {
                 whisper(playerId,
-                    `WildShape buttons were updated on <b>${sheetNames.map(html).join(", ")}</b>. `
+                    `WildShape buttons and animal access were updated for <b>${sheetNames.map(html).join(", ")}</b>. `
                     + "Close and reopen the character sheet to see newly added buttons."
                 );
             });
@@ -392,7 +422,7 @@
         function syncFeedback(playerId, group, forms, requestedGroup) {
             const notified = notifyCharacterControllers(group, playerId);
             whisper(playerId,
-                `The ${html(requestedGroup)} buttons now match ${forms.length} animal form(s). `
+                `The ${html(requestedGroup)} buttons and player access now match ${forms.length} animal form(s). `
                 + "Close and reopen the character sheet to see newly added buttons."
                 + (notified ? ` I also told ${notified} character controller(s).` : "")
             );
@@ -610,6 +640,7 @@
                 + "GM setup: <code>!wildshape setup --folder \"Tylen\" --base \"Tylen\"</code><br>"
                 + "GM sync: <code>!wildshape sync --group tylen</code><br>"
                 + "GM refresh (same as sync): <code>!wildshape refresh Tylen</code><br>"
+                + "Sync also gives each animal the same controllers as the base character.<br>"
                 + "Use the Human and animal buttons on the character sheet to change form.<br>"
                 + "After setup or sync, close and reopen the character sheet to see newly added buttons."
             );

@@ -6,8 +6,9 @@ The animal characters in one Journal folder are the list of forms. Add a
 character to the folder, then sync, and its button appears. Remove it, then
 sync, and its button goes away.
 
-The Mod changes the token only. It does not rewrite either character sheet.
-This makes it safer to use with both the 2014 and 2024 D&D sheets.
+The Mod changes the token and keeps each animal's player control in step with
+the base character. It does not rewrite character stats. This makes it safer
+to use with both the 2014 and 2024 D&D sheets.
 
 When AI Co-GM Telemetry is installed, each successful form change is also sent
 to the campaign dashboard's **Latest** activity list.
@@ -59,10 +60,14 @@ The older command still works too:
 ```
 
 This scans the `Tylen` folder again. It adds new form buttons and removes form
-buttons whose characters are no longer in the folder. Roll20 may keep an open
-character sheet showing its old button list. Close and reopen the sheet after
-syncing to see newly added buttons. The Mod privately sends this reminder to
-the GM and to each player who controls the character.
+buttons whose characters are no longer in the folder. It also gives every
+animal in the folder the same **Can Be Edited & Controlled By** players as the
+base character. If more than one base character is set up, their player lists
+are joined.
+
+Roll20 may keep an open character sheet showing its old button list. Close and
+reopen the sheet after syncing to see newly added buttons. The Mod privately
+sends this reminder to the GM and to each player who controls the character.
 
 For a list of commands, run:
 
@@ -76,6 +81,9 @@ Mod already uses `!ws`.
 ## Safe behaviour
 
 - Only the GM or a player who controls the token can change it.
+- Each sync replaces animal control with the base character's current player
+  list. Copy a new animal into the folder, run sync, then close and reopen the
+  sheet.
 - The old WildShape script can stay enabled while this is tested.
 - The command is `!wildshape`, so it does not clash with the old `!ws` command.
 - Health bars are remembered separately for Human and each animal form.

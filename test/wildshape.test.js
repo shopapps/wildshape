@@ -173,9 +173,9 @@ test("refresh command rescans the folder and removes stale buttons", async () =>
     assert.deepEqual(names, ["Human", "Boar"]);
     const gmMessage = game.chat.find((entry) => entry.message.startsWith('/w "Paul"'));
     const playerMessage = game.chat.find((entry) => entry.message.startsWith('/w "Tylen Player"'));
-    assert.match(gmMessage.message, /Tylen buttons now match 1 animal form/);
+    assert.match(gmMessage.message, /Tylen buttons and player access now match 1 animal form/);
     assert.match(gmMessage.message, /Close and reopen the character sheet/);
-    assert.match(playerMessage.message, /WildShape buttons were updated on <b>Tylen<\/b>/);
+    assert.match(playerMessage.message, /WildShape buttons and animal access were updated for <b>Tylen<\/b>/);
     assert.match(playerMessage.message, /Close and reopen the character sheet/);
 });
 
@@ -214,6 +214,52 @@ test("sync privately tells each character controller", async () => {
     assert.ok(game.chat.some((entry) => entry.message.startsWith('/w "Paul"')));
     assert.ok(game.chat.some((entry) => entry.message.startsWith('/w "Tylen Player"')));
     assert.ok(game.chat.some((entry) => entry.message.startsWith('/w "Second Player"')));
+});
+
+test("sync gives every animal the base character controllers", () => {
+    const game = tylenGame();
+    game.add("player", "player-2", { _displayname: "Second Player", _lastpage: "page-1" });
+    game.objects.get("tylen-2014").set("controlledby", "player-1,player-2");
+    game.objects.get("boar").set("controlledby", "old-player");
+    game.objects.get("wolf").set("controlledby", "");
+    const mod = createWildShapeMod(game.env);
+
+    mod.setupGroup("Tylen", ["Tylen"]);
+
+    assert.equal(game.objects.get("boar").get("controlledby"), "player-1,player-2");
+    assert.equal(game.objects.get("wolf").get("controlledby"), "player-1,player-2");
+
+    game.add("character", "spider", {
+        name: "Spider",
+        controlledby: "source-owner",
+        avatar: "https://img.example/spider.png",
+        defaulttoken: tokenData("Spider", "https://img.example/spider-token.png", "spider", 5)
+    });
+    game.campaign.journalfolder = JSON.stringify([
+        { n: "Tylen", id: "folder-tylen", i: ["wolf", "boar", "spider"] }
+    ]);
+    game.objects.get("tylen-2014").set("controlledby", "player-2");
+
+    mod.syncGroup("tylen");
+
+    assert.equal(game.objects.get("boar").get("controlledby"), "player-2");
+    assert.equal(game.objects.get("wolf").get("controlledby"), "player-2");
+    assert.equal(game.objects.get("spider").get("controlledby"), "player-2");
+});
+
+test("sync joins controllers from more than one base character", () => {
+    const game = tylenGame();
+    game.add("player", "player-2", { _displayname: "Second Player", _lastpage: "page-1" });
+    game.objects.get("tylen-2014").set("controlledby", "player-1");
+    game.objects.get("tylen-2024").set("controlledby", "player-2");
+    game.objects.get("boar").set("controlledby", "old-player");
+    game.objects.get("wolf").set("controlledby", "old-player");
+    const mod = createWildShapeMod(game.env);
+
+    mod.setupGroup("Tylen", ["Tylen", "Tylen 2024"]);
+
+    assert.equal(game.objects.get("boar").get("controlledby"), "player-1,player-2");
+    assert.equal(game.objects.get("wolf").get("controlledby"), "player-1,player-2");
 });
 
 test("adds Human and animal buttons to both base character sheets", () => {
