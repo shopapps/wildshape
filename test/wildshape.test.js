@@ -169,7 +169,49 @@ test("refresh command rescans the folder and removes stale buttons", async () =>
     const names = game.env.findObjs({ _type: "ability", _characterid: "tylen-2014" })
         .map((ability) => ability.get("name"));
     assert.deepEqual(names, ["Human", "Boar"]);
-    assert.match(game.chat.at(-1).message, /Tylen buttons now match 1 animal form/);
+    const gmMessage = game.chat.find((entry) => entry.message.startsWith('/w "Paul"'));
+    const playerMessage = game.chat.find((entry) => entry.message.startsWith('/w "Tylen Player"'));
+    assert.match(gmMessage.message, /Tylen buttons now match 1 animal form/);
+    assert.match(gmMessage.message, /Close and reopen the character sheet/);
+    assert.match(playerMessage.message, /WildShape buttons were updated on <b>Tylen<\/b>/);
+    assert.match(playerMessage.message, /Close and reopen the character sheet/);
+});
+
+test("help lists the commands and the sheet refresh step", async () => {
+    const game = tylenGame();
+    const mod = createWildShapeMod(game.env);
+
+    await mod.handleChat({
+        type: "api",
+        playerid: "player-1",
+        content: "!wildshape help"
+    });
+
+    const message = game.chat.at(-1).message;
+    assert.match(message, /!wildshape help/);
+    assert.match(message, /!wildshape setup --folder/);
+    assert.match(message, /!wildshape sync --group tylen/);
+    assert.match(message, /!wildshape refresh Tylen/);
+    assert.match(message, /close and reopen the character sheet/i);
+});
+
+test("sync privately tells each character controller", async () => {
+    const game = tylenGame();
+    game.add("player", "player-2", { _displayname: "Second Player", _lastpage: "page-1" });
+    game.objects.get("tylen-2014").set("controlledby", "player-1,player-2");
+    const mod = createWildShapeMod(game.env);
+    mod.setupGroup("Tylen", ["Tylen"]);
+
+    await mod.handleChat({
+        type: "api",
+        playerid: "gm",
+        content: "!wildshape sync --group tylen"
+    });
+
+    assert.equal(game.chat.length, 3);
+    assert.ok(game.chat.some((entry) => entry.message.startsWith('/w "Paul"')));
+    assert.ok(game.chat.some((entry) => entry.message.startsWith('/w "Tylen Player"')));
+    assert.ok(game.chat.some((entry) => entry.message.startsWith('/w "Second Player"')));
 });
 
 test("adds Human and animal buttons to both base character sheets", () => {

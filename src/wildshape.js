@@ -9,7 +9,7 @@
     "use strict";
 
     const SCRIPT_NAME = "WildShape Next";
-    const VERSION = "0.2.0";
+    const VERSION = "0.3.0";
     const STATE_KEY = "WildShapeNext";
     const ABILITY_MARKER = "Managed by WildShape Next";
 
@@ -345,6 +345,58 @@
             return ids.includes("all") || ids.includes(playerId);
         }
 
+        function controlledPlayerIds(character) {
+            const ids = String(character.get("controlledby") || "")
+                .split(",")
+                .map((id) => id.trim())
+                .filter(Boolean);
+
+            if (ids.includes("all")) {
+                return api.findObjs({ _type: "player" }).map((player) => player.id);
+            }
+
+            return ids.filter((id) => api.getObj("player", id));
+        }
+
+        function notifyCharacterControllers(group, commandPlayerId) {
+            const sheetsByPlayer = new Map();
+
+            group.baseCharacterIds.forEach((characterId) => {
+                const character = api.getObj("character", characterId);
+                if (!character) {
+                    return;
+                }
+
+                controlledPlayerIds(character).forEach((playerId) => {
+                    if (playerId === commandPlayerId) {
+                        return;
+                    }
+                    if (!sheetsByPlayer.has(playerId)) {
+                        sheetsByPlayer.set(playerId, []);
+                    }
+                    sheetsByPlayer.get(playerId).push(character.get("name"));
+                });
+            });
+
+            sheetsByPlayer.forEach((sheetNames, playerId) => {
+                whisper(playerId,
+                    `WildShape buttons were updated on <b>${sheetNames.map(html).join(", ")}</b>. `
+                    + "Close and reopen the character sheet to see newly added buttons."
+                );
+            });
+
+            return sheetsByPlayer.size;
+        }
+
+        function syncFeedback(playerId, group, forms, requestedGroup) {
+            const notified = notifyCharacterControllers(group, playerId);
+            whisper(playerId,
+                `The ${html(requestedGroup)} buttons now match ${forms.length} animal form(s). `
+                + "Close and reopen the character sheet to see newly added buttons."
+                + (notified ? ` I also told ${notified} character controller(s).` : "")
+            );
+        }
+
         function playerControlsToken(token, playerId) {
             if (api.playerIsGM(playerId) || controls(token.get("controlledby"), playerId)) {
                 return true;
@@ -532,9 +584,13 @@
 
         function help(playerId) {
             whisper(playerId,
-                "<b>WildShape Next</b><br>"
-                + "GM setup: <code>!wildshape setup --folder \"Tylen\" --base \"Tylen\" --base \"Tylen 2024\"</code><br>"
-                + "Refresh buttons: <code>!wildshape refresh Tylen</code>"
+                "<b>WildShape Next help</b><br>"
+                + "Show this help: <code>!wildshape help</code><br>"
+                + "GM setup: <code>!wildshape setup --folder \"Tylen\" --base \"Tylen\"</code><br>"
+                + "GM sync: <code>!wildshape sync --group tylen</code><br>"
+                + "GM refresh (same as sync): <code>!wildshape refresh Tylen</code><br>"
+                + "Use the Human and animal buttons on the character sheet to change form.<br>"
+                + "After setup or sync, close and reopen the character sheet to see newly added buttons."
             );
         }
 
@@ -559,9 +615,7 @@
                         throw new Error("Setup needs --folder and at least one --base.");
                     }
                     const result = setupGroup(folder, bases, options.group);
-                    whisper(msg.playerid,
-                        `Added ${result.forms.length + 1} buttons to ${result.group.baseCharacterIds.length} character sheet(s).`
-                    );
+                    syncFeedback(msg.playerid, result.group, result.forms, result.group.folder);
                     return;
                 }
                 if (command === "sync" || command === "refresh") {
@@ -574,9 +628,7 @@
                     }
                     const groupId = slug(requestedGroup);
                     const forms = syncGroup(groupId);
-                    whisper(msg.playerid,
-                        `The ${html(requestedGroup)} buttons now match ${forms.length} animal form(s).`
-                    );
+                    syncFeedback(msg.playerid, stateRoot().groups[groupId], forms, requestedGroup);
                     return;
                 }
                 if (command === "shift") {

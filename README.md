@@ -49,8 +49,23 @@ When the folder changes, the Mod tries to sync on its own. The GM can also run:
 !wildshape refresh Tylen
 ```
 
+The older command still works too:
+
+```text
+!wildshape sync --group tylen
+```
+
 This scans the `Tylen` folder again. It adds new form buttons and removes form
-buttons whose characters are no longer in the folder.
+buttons whose characters are no longer in the folder. Roll20 may keep an open
+character sheet showing its old button list. Close and reopen the sheet after
+syncing to see newly added buttons. The Mod privately sends this reminder to
+the GM and to each player who controls the character.
+
+For a list of commands, run:
+
+```text
+!wildshape help
+```
 
 The command starts with `!wildshape`, not `!ws`, because the older WildShape
 Mod already uses `!ws`.
