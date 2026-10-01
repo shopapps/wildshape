@@ -4,15 +4,24 @@
  * The Journal folder is the list of animal forms.
  * The Mod adds matching buttons to each base character.
  * It changes tokens and keeps animal sheet control in step with the base sheet.
- * It does not rewrite character stats.
+ * D&D 2024 druids share their main sheet's health with their animal sheets.
  */
 (function () {
     "use strict";
 
     const SCRIPT_NAME = "WildShape Next";
-    const VERSION = "0.6.0";
+    const VERSION = "0.7.0";
     const STATE_KEY = "WildShapeNext";
     const ABILITY_MARKER = "Managed by WildShape Next";
+    const SCORES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
+    const SKILLS = {
+        athletics: "strength", acrobatics: "dexterity", sleight_of_hand: "dexterity",
+        stealth: "dexterity", arcana: "intelligence", history: "intelligence",
+        investigation: "intelligence", nature: "intelligence", religion: "intelligence",
+        animal_handling: "wisdom", insight: "wisdom", medicine: "wisdom",
+        perception: "wisdom", survival: "wisdom", deception: "charisma",
+        intimidation: "charisma", performance: "charisma", persuasion: "charisma"
+    };
 
     const FORM_PROPERTIES = [
         "imgsrc",
@@ -72,6 +81,8 @@
             createObj: env.createObj,
             findObjs: env.findObjs,
             getObj: env.getObj,
+            getComputed: env.getComputed,
+            setComputed: env.setComputed,
             log: env.log || function () {},
             on: env.on,
             playerIsGM: env.playerIsGM,
@@ -94,7 +105,267 @@
             root.version = VERSION;
             root.groups = root.groups || {};
             root.tokens = root.tokens || {};
+            root.beasts = root.beasts || {};
+            root.formOwners = root.formOwners || {};
             return root;
+        }
+
+        const queues = new Map();
+        function queued(baseId, work) {
+            const next = (queues.get(baseId) || Promise.resolve()).catch(() => {}).then(work);
+            queues.set(baseId, next);
+            return next.finally(() => {
+                if (queues.get(baseId) === next) queues.delete(baseId);
+            });
+        }
+
+        function is2024(characterId) {
+            return api.getObj("character", characterId)?.get("charactersheetname") === "dnd2024byroll20";
+        }
+
+        function attribute(characterId, name) {
+            return api.findObjs({ _type: "attribute", _characterid: characterId, name })[0];
+        }
+
+        function setAttribute(characterId, name, current, max) {
+            const values = { current };
+            if (max !== undefined) values.max = max;
+            const existing = attribute(characterId, name);
+            if (existing) {
+                if (Object.keys(values).some((key) => String(existing.get(key)) !== String(values[key]))) {
+                    existing.set(values);
+                }
+                return existing.id;
+            }
+            return api.createObj("attribute", { _characterid: characterId, name, ...values }).id;
+        }
+
+        function number(value, label) {
+            const scalar = value && typeof value === "object" ? value.current : value;
+            if (scalar === null || scalar === undefined || scalar === "" || !Number.isFinite(Number(scalar))) {
+                throw new Error(`Cannot read ${label}. No form change was made.`);
+            }
+            return Number(scalar);
+        }
+
+        function modifier(score) {
+            return Math.floor((score - 10) / 2);
+        }
+
+        async function sheetNumber(characterId, name, kind = "current") {
+            if (!api.getComputed || !api.setComputed) {
+                throw new Error("D&D 2024 needs Roll20 Mod sandbox v1.5 and its sheet functions.");
+            }
+            // Use the Beacon field explicitly: getSheetItem can pick a stale
+            // legacy attribute with the same name in a mixed-sheet campaign.
+            const value = await api.getComputed({ characterId, property: name });
+            return number(value && typeof value === "object" ? value[kind] : value, name);
+        }
+
+        // Read metadata only. Never write Beacon's store: resource setters in the
+        // current sheet can rewrite relationships and lose a resource's bonuses.
+        function druidMetadata(baseId) {
+            let data = attribute(baseId, "store")?.get("current");
+            if (typeof data === "string") data = JSON.parse(data);
+            if (!data?.integrants?.integrants) {
+                throw new Error("Open the main 2024 sheet, then try again. Its class data is not available.");
+            }
+            const entries = Object.values(data.integrants.integrants).filter((entry) => entry._enabled !== false);
+            const levels = entries.filter((entry) => entry.type === "Class Level" && entry.name === "Druid");
+            const level = Math.max(0, ...levels.map((entry) => Number(entry.level)));
+            if (!Number.isInteger(level) || level < 2 || level > 20) {
+                throw new Error("Cannot find a valid Druid level on the main sheet.");
+            }
+            return {
+                level,
+                moon: entries.some((entry) => entry.type === "Subclass" && entry.name === "Circle of the Moon"),
+                primalStrike: entries.some((entry) => entry.type === "Effect" && entry.name === "Primal Strike"),
+                languages: entries.filter((entry) => entry.type === "Language").map((entry) => entry.name).join(", "),
+                creatureType: data.character?.creatureType || "Humanoid",
+                features: entries.filter((entry) => entry.type === "Features" && entry.source !== "Species")
+                    .map((entry) => entry.name)
+            };
+        }
+
+        async function druidProfile(baseId) {
+            const profile = { ...druidMetadata(baseId), scores: {}, saves: {}, skills: {} };
+            profile.pb = await sheetNumber(baseId, "pb");
+            await Promise.all(SCORES.map(async (score) => {
+                profile.scores[score] = await sheetNumber(baseId, score);
+                profile.saves[score] = await sheetNumber(baseId, `${score}_save_prof`);
+            }));
+            await Promise.all(Object.keys(SKILLS).map(async (skill) => {
+                const [trained, type, flat] = await Promise.all([
+                    sheetNumber(baseId, `${skill}_prof`), sheetNumber(baseId, `${skill}_type`),
+                    sheetNumber(baseId, `${skill}_flat`)
+                ]);
+                profile.skills[skill] = { trained, type, flat };
+            }));
+            return profile;
+        }
+
+        function legacyBeastStats(formId) {
+            // Old WildShape may already have replaced the animal's mental stats
+            // and skills. Read its original cache, never the old PC's bonuses.
+            const name = String(api.getObj("character", formId).get("name")).replace(/\s*-\s*/g, "-").toLowerCase();
+            const shapes = Object.values(api.state.WILDSHAPE?.shifters || {})
+                .flatMap((shifter) => Object.values(shifter.shapes || {}));
+            const exact = shapes.filter((shape) => shape.ID === formId);
+            const matches = exact.length ? exact : shapes.filter((shape) =>
+                String(shape.character || "").replace(/\s*-\s*/g, "-").toLowerCase() === name);
+            if (matches.length > 1) throw new Error(`More than one old animal cache matches ${name}. Ask the GM to check it.`);
+            return matches[0]?.stats_cache;
+        }
+
+        function beastStats(formId) {
+            if (is2024(formId) || String(attribute(formId, "npc")?.get("current")) !== "1") {
+                throw new Error("Animal forms must use the D&D 2014 monster sheet. The main PC can use 2024. "
+                    + "Roll20 does not expose writable 2024 monster skills and saves.");
+            }
+            const cache = stateRoot().beasts;
+            if (!cache[formId]) {
+                const read = (name) => attribute(formId, name)?.get("current");
+                const legacy = legacyBeastStats(formId);
+                const scores = Object.fromEntries(SCORES.map((score) => [score, number(legacy ? legacy.stats?.[score] : read(score), score)]));
+                const skills = Object.fromEntries(Object.keys(SKILLS).map((skill) => [skill, legacy ? legacy.skills?.[skill] : read(`npc_${skill}`)]));
+                const saves = Object.fromEntries(SCORES.map((score) => [score, legacy ? legacy.saves?.[score] : read(`npc_${score.slice(0, 3)}_save`)]));
+                const challenge = String(read("npc_challenge") || "0");
+                const cr = challenge.includes("/") ? 0 : number(challenge, "animal challenge rating");
+                cache[formId] = {
+                    scores, skills, saves, ac: number(read("npc_ac"), "animal AC"),
+                    pb: Math.max(2, 2 + Math.floor((cr - 1) / 4)),
+                    type: String(read("npc_type") || ""), senses: String(read("npc_senses") || "")
+                };
+                if (legacy) api.log(`${SCRIPT_NAME}: Recovered original animal stats for ${api.getObj("character", formId).get("name")} from old WildShape.`);
+            }
+            return cache[formId];
+        }
+
+        function formRoll(beastTotal, beastScore, formScore, trained, multiplier, flat, profile, beast) {
+            const original = beastTotal === "" || beastTotal === undefined ? modifier(beastScore) : Number(beastTotal);
+            if (!Number.isFinite(original)) throw new Error("The animal has a non-numeric skill or save bonus.");
+            const beastTraining = Math.max(0, original - modifier(beastScore));
+            const beastMultiplier = beastTraining >= 2 * beast.pb ? 2 : beastTraining > 0 ? 1 : 0;
+            const training = Math.max(trained ? multiplier : 0, beastMultiplier) * profile.pb;
+            return Math.max(original, modifier(formScore) + training + flat);
+        }
+
+        function applyFormStats(group, baseId, form, profile) {
+            const owner = stateRoot().formOwners[form.id];
+            if (owner && owner !== baseId) {
+                throw new Error("Each 2024 PC needs their own animal copies. This animal already belongs to another PC.");
+            }
+            const beast = beastStats(form.id);
+            const scores = { ...beast.scores };
+            ["intelligence", "wisdom", "charisma"].forEach((score) => { scores[score] = profile.scores[score]; });
+            const wisdom = modifier(profile.scores.wisdom);
+            SCORES.forEach((score) => {
+                setAttribute(form.id, score, scores[score]);
+                setAttribute(form.id, `${score}_base`, scores[score]);
+                setAttribute(form.id, `${score}_mod`, modifier(scores[score]));
+                let total = formRoll(beast.saves[score], beast.scores[score], scores[score],
+                    profile.saves[score], 1, 0, profile, beast);
+                if (score === "constitution" && profile.moon && profile.level >= 6) total += wisdom;
+                const key = `npc_${score.slice(0, 3)}_save`;
+                setAttribute(form.id, key, total);
+                setAttribute(form.id, `${key}_base`, String(total));
+                setAttribute(form.id, `${key}_flag`, 1);
+            });
+            Object.entries(SKILLS).forEach(([skill, score]) => {
+                const own = profile.skills[skill];
+                const total = formRoll(beast.skills[skill], beast.scores[score], scores[score],
+                    own.trained, own.type, own.flat, profile, beast);
+                setAttribute(form.id, `npc_${skill}`, total);
+                setAttribute(form.id, `npc_${skill}_base`, String(total));
+                setAttribute(form.id, `npc_${skill}_flag`, 1);
+            });
+            setAttribute(form.id, "npc_saving_flag", 1);
+            setAttribute(form.id, "npc_skills_flag", 1);
+            setAttribute(form.id, "npc_name", form.get("name"));
+            setAttribute(form.id, "npc_ac", profile.moon ? Math.max(beast.ac, 13 + wisdom) : beast.ac);
+            setAttribute(form.id, "npc_languages", profile.languages);
+            setAttribute(form.id, "npc_type", beast.type.replace(/\bbeast\b/i, profile.creatureType));
+            const passive = 10 + Number(attribute(form.id, "npc_perception").get("current"));
+            setAttribute(form.id, "npc_senses", /passive perception\s+\d+/i.test(beast.senses)
+                ? beast.senses.replace(/passive perception\s+\d+/i, `passive Perception ${passive}`)
+                : `${beast.senses}${beast.senses ? ", " : ""}passive Perception ${passive}`);
+            const base = api.getObj("character", baseId);
+            const notes = [
+                `This is ${base.get("name")}'s 2024 Wild Shape. HP and temporary HP are shared with the main sheet.`,
+                "Track Wild Shape uses, spell slots, Hit Dice, conditions and concentration on the main sheet. "
+                    + "Do not press Enter or Leave Wild Shape there as well as a form button; do not grant temporary HP twice.",
+                `Retained features and feats: ${Array.from(new Set(profile.features)).join(", ")}. `
+                    + "Use their rules on the main sheet; this note does not automate their effects."
+            ];
+            if (profile.moon) notes.push("Circle of the Moon spells can be cast from the main sheet while shifted.");
+            if (profile.moon && profile.level >= 6) notes.push(`Attacks may deal Radiant damage. Constitution saves already include Wisdom (${wisdom >= 0 ? "+" : ""}${wisdom}).`);
+            if (profile.primalStrike) notes.push(`Primal Strike: once on each of your turns, add ${profile.level >= 15 ? "2d8" : "1d8"} Cold, Fire, Lightning or Thunder damage to a hit. Apply it manually.`);
+            setAttribute(form.id, "repeating_npctrait_wildshapenext_name", "Wild Shape — retained features");
+            setAttribute(form.id, "repeating_npctrait_wildshapenext_description", notes.join("\n\n"));
+            stateRoot().formOwners[form.id] = baseId;
+            syncAbilities(group, form.id, group.formCharacterIds.map((id) => api.getObj("character", id)), baseId);
+        }
+
+        async function readHealth(baseId) {
+            const [hp, max, temp] = await Promise.all([
+                sheetNumber(baseId, "hp", "current"), sheetNumber(baseId, "hp", "max"), sheetNumber(baseId, "hp_temp")
+            ]);
+            return { hp: Math.max(0, hp), max, temp: Math.max(0, temp) };
+        }
+
+        function healthBars(characterId, health) {
+            if (is2024(characterId)) {
+                return { bar1_link: "hp", bar1_value: health.hp, bar1_max: health.max,
+                    bar2_link: "ac", bar2_value: health.ac, bar2_max: "",
+                    bar3_link: "hp_temp", bar3_value: health.temp, bar3_max: "" };
+            }
+            return {
+                bar1_link: setAttribute(characterId, "hp", health.hp, health.max),
+                bar1_value: health.hp, bar1_max: health.max,
+                bar2_link: attribute(characterId, "npc_ac")?.id || "",
+                bar2_value: attribute(characterId, "npc_ac")?.get("current") || "", bar2_max: "",
+                bar3_link: setAttribute(characterId, "hp_temp", health.temp), bar3_value: health.temp, bar3_max: ""
+            };
+        }
+
+        async function shareHealth(baseId, changes = {}) {
+            const health = { ...await readHealth(baseId), ...changes };
+            health.ac = await sheetNumber(baseId, "ac");
+            if (changes.hp !== undefined) await api.setComputed({ characterId: baseId, property: "hp_current", args: [Math.max(0, health.hp)] });
+            if (changes.temp !== undefined) await api.setComputed({ characterId: baseId, property: "hp_temp", args: [Math.max(0, health.temp)] });
+            health.hp = Math.max(0, health.hp);
+            health.temp = Math.max(0, health.temp);
+            const forms = Object.entries(stateRoot().formOwners).filter(([, owner]) => owner === baseId)
+                .map(([id]) => id).filter((id) => api.getObj("character", id));
+            forms.forEach((id) => healthBars(id, health));
+            api.findObjs({ _type: "graphic", _subtype: "token" }).forEach((token) => {
+                const id = token.get("represents");
+                if (id === baseId || forms.includes(id)) token.set(healthBars(id, health));
+            });
+            return health;
+        }
+
+        async function syncStats2024(groupId) {
+            const group = stateRoot().groups[groupId];
+            const bases = group.baseCharacterIds.filter(is2024);
+            if (!bases.length) return;
+            if (group.baseCharacterIds.length !== 1) {
+                throw new Error("A 2024 group needs one main character so health is not shared between different PCs.");
+            }
+            const baseId = bases[0];
+            return queued(baseId, async () => {
+                const forms = group.formCharacterIds.map((id) => api.getObj("character", id));
+                forms.forEach((form) => {
+                    if (stateRoot().formOwners[form.id] && stateRoot().formOwners[form.id] !== baseId) {
+                        throw new Error("Each 2024 PC needs their own animal copies. This animal already belongs to another PC.");
+                    }
+                    beastStats(form.id);
+                });
+                const profile = await druidProfile(baseId);
+                forms.forEach((form) => applyFormStats(group, baseId, form, profile));
+                await shareHealth(baseId);
+                return profile;
+            });
         }
 
         function html(value) {
@@ -273,8 +544,8 @@
             return rows;
         }
 
-        function syncAbilities(group, baseCharacterId, forms) {
-            const desired = desiredAbilities(group, baseCharacterId, forms);
+        function syncAbilities(group, baseCharacterId, forms, ownerId = baseCharacterId) {
+            const desired = desiredAbilities(group, ownerId, forms);
             const current = managedAbilities(baseCharacterId, group.id);
             const byName = new Map();
 
@@ -343,7 +614,10 @@
                 throw new Error(`Unknown group ${groupId}.`);
             }
 
-            const forms = characterForms(group.folder);
+            const forms = characterForms(group.folder).filter((form) => !group.baseCharacterIds.includes(form.id));
+            const removed = (group.formCharacterIds || []).filter((id) => !forms.some((form) => form.id === id));
+            removeManagedAbilities(removed, groupId);
+            removed.forEach((id) => { delete stateRoot().formOwners[id]; });
             syncFormNames(group, forms);
             group.formCharacterIds = forms.map((form) => form.id);
             group.baseCharacterIds = group.baseCharacterIds.filter((id) => api.getObj("character", id));
@@ -352,14 +626,15 @@
             return forms;
         }
 
-        function syncAll() {
-            Object.keys(stateRoot().groups).forEach((groupId) => {
+        async function syncAll() {
+            for (const groupId of Object.keys(stateRoot().groups)) {
                 try {
                     syncGroup(groupId);
+                    await syncStats2024(groupId);
                 } catch (error) {
                     api.log(`${SCRIPT_NAME}: ${error.message}`);
                 }
-            });
+            }
         }
 
         function setupGroup(folderName, baseNames, groupName) {
@@ -380,18 +655,24 @@
             const root = stateRoot();
             const previous = root.groups[id];
             const nextBaseIds = baseCharacters.map((character) => character.id);
+            if (nextBaseIds.some(is2024) && nextBaseIds.length !== 1) {
+                throw new Error("A 2024 group needs one main character so health is not shared between different PCs.");
+            }
             if (previous) {
                 removeManagedAbilities(
                     previous.baseCharacterIds.filter((characterId) => !nextBaseIds.includes(characterId)),
                     id
                 );
+                if (previous.baseCharacterIds.join(",") !== nextBaseIds.join(",")) {
+                    previous.formCharacterIds.forEach((formId) => { delete root.formOwners[formId]; });
+                }
             }
 
             root.groups[id] = {
                 id,
                 folder: folderName,
                 baseCharacterIds: nextBaseIds,
-                formCharacterIds: []
+                formCharacterIds: previous?.formCharacterIds || []
             };
             const forms = syncGroup(id);
             return { group: root.groups[id], forms };
@@ -590,13 +871,21 @@
             return snapshot.imgsrc && /^(https?:|data:)/.test(snapshot.imgsrc);
         }
 
-        async function shift(msg, groupId, formId, baseCharacterId) {
+        function shift(msg, groupId, formId, baseCharacterId) {
+            return queued(baseCharacterId, () => shiftNow(msg, groupId, formId, baseCharacterId));
+        }
+
+        async function shiftNow(msg, groupId, formId, baseCharacterId) {
             const group = stateRoot().groups[groupId];
             if (!group) {
                 throw new Error(`Unknown group ${groupId}.`);
             }
             if (!group.baseCharacterIds.includes(baseCharacterId)) {
                 throw new Error("That base character is not in this group.");
+            }
+            const rules2024 = is2024(baseCharacterId);
+            if (rules2024 && group.baseCharacterIds.length !== 1) {
+                throw new Error("A 2024 group needs one main character so health is not shared between different PCs.");
             }
 
             const forms = syncGroup(groupId);
@@ -632,12 +921,30 @@
                 ? "Human"
                 : previousCharacter ? formName(group, previousCharacter) : "Unknown";
             const targetKey = isHuman ? `human:${baseCharacterId}` : targetCharacter.id;
-            const snapshot = saved.forms[targetKey] || await defaultSnapshot(targetCharacter);
+            const snapshot = { ...saved.forms[targetKey] || await defaultSnapshot(targetCharacter) };
+            snapshot.name = targetCharacter.get("name");
+            snapshot.represents = targetCharacter.id;
             if (!validImage(snapshot)) {
                 throw new Error(`${targetCharacter.get("name")} needs a normal image or default token.`);
             }
 
-            token.set(snapshot);
+            let previousTemp;
+            if (rules2024) {
+                const profile = await druidProfile(baseCharacterId);
+                if (!isHuman) applyFormStats(group, baseCharacterId, targetCharacter, profile);
+                const health = await readHealth(baseCharacterId);
+                const temp = !isHuman && previousKey !== targetKey
+                    ? Math.max(health.temp, profile.level * (profile.moon ? 3 : 1)) : health.temp;
+                previousTemp = health.temp;
+                const shared = await shareHealth(baseCharacterId, temp !== health.temp ? { temp } : {});
+                Object.assign(snapshot, healthBars(targetCharacter.id, shared));
+            }
+            try {
+                token.set(snapshot);
+            } catch (error) {
+                if (rules2024) await shareHealth(baseCharacterId, { temp: previousTemp });
+                throw error;
+            }
             saved.currentForm = targetKey;
             saved.forms[targetKey] = captureToken(token);
             if (previousKey !== targetKey) {
@@ -656,8 +963,45 @@
                     api.log(`${SCRIPT_NAME}: Could not report form change: ${error.message}`);
                 }
             }
-            whisper(msg.playerid, `${html(token.get("name"))} is now ${html(targetCharacter.get("name"))}.`);
+            whisper(msg.playerid, `${html(token.get("name"))} is now ${html(targetCharacter.get("name"))}.`
+                + (rules2024 && !isHuman && previousKey !== targetKey
+                    ? " Spend one Wild Shape use by hand on your main sheet. Temporary HP is already set; do not add it again."
+                    : ""));
             return token;
+        }
+
+        async function changeHealth(msg, groupId, amount, damage) {
+            const group = stateRoot().groups[groupId];
+            if (!group || group.baseCharacterIds.length !== 1 || !is2024(group.baseCharacterIds[0])) {
+                throw new Error("Damage and heal need a group with one 2024 main character.");
+            }
+            findTargetToken(msg, group);
+            const value = number(amount, "damage or healing amount");
+            if (!Number.isInteger(value) || value < 0) throw new Error("Use a whole number of 0 or more.");
+            const baseId = group.baseCharacterIds[0];
+            await queued(baseId, async () => {
+                const health = await readHealth(baseId);
+                const updated = await shareHealth(baseId, damage
+                    ? { temp: Math.max(0, health.temp - value), hp: Math.max(0, health.hp - Math.max(0, value - health.temp)) }
+                    : { hp: Math.min(health.max, health.hp + value) });
+                whisper(msg.playerid, `HP: ${updated.hp}/${updated.max}. Temporary HP: ${updated.temp}. `
+                    + "Handle concentration checks and other effects on the main sheet.");
+            });
+        }
+
+        function healthAttributeChanged(attr, previous) {
+            const characterId = attr.get("_characterid");
+            const name = attr.get("name");
+            const owner = stateRoot().formOwners[characterId];
+            const main = Object.values(stateRoot().groups).some((group) => group.baseCharacterIds.includes(characterId))
+                && is2024(characterId);
+            if (!(owner && ["hp", "hp_temp"].includes(name))
+                && !(main && ["store", "updateId"].includes(name))) return;
+            const changed = String(attr.get("current")) !== String(previous.current);
+            const current = attr.get("current");
+            return queued(owner || characterId, () => shareHealth(owner || characterId,
+                owner && changed ? { [name === "hp" ? "hp" : "temp"]: number(current, name) } : {}))
+                .catch((error) => api.log(`${SCRIPT_NAME}: Health sync failed: ${error.message}`));
         }
 
         function help(playerId) {
@@ -667,8 +1011,13 @@
                 + "GM setup: <code>!wildshape setup --folder \"Tylen\" --base \"Tylen\"</code><br>"
                 + "GM sync: <code>!wildshape sync --group tylen</code><br>"
                 + "GM refresh (same as sync): <code>!wildshape refresh Tylen</code><br>"
+                + "2024 damage (uses temporary HP first): <code>!wildshape damage Tylen 10</code><br>"
+                + "2024 heal: <code>!wildshape heal Tylen 10</code><br>"
                 + "Sync also gives each animal the same controllers as the base character.<br>"
                 + "Use the Human and animal buttons on the character sheet to change form.<br>"
+                + "2024 bars: 1 = shared HP, 2 = AC, 3 = temporary HP. Direct bar edits set the number; they do not apply damage rules.<br>"
+                + "Track Wild Shape uses, spell slots, Hit Dice, conditions and concentration on the main sheet. "
+                + "Each new animal shift needs one use spent by hand. Do not also use the main sheet's Enter/Leave Wild Shape buttons.<br>"
                 + "After setup or sync, close and reopen the character sheet to see newly added buttons."
             );
         }
@@ -694,6 +1043,7 @@
                         throw new Error("Setup needs --folder and at least one --base.");
                     }
                     const result = setupGroup(folder, bases, options.group);
+                    await syncStats2024(result.group.id);
                     syncFeedback(msg.playerid, result.group, result.forms, result.group.folder);
                     return;
                 }
@@ -707,6 +1057,7 @@
                     }
                     const groupId = slug(requestedGroup);
                     const forms = syncGroup(groupId);
+                    await syncStats2024(groupId);
                     syncFeedback(msg.playerid, stateRoot().groups[groupId], forms, requestedGroup);
                     return;
                 }
@@ -714,7 +1065,12 @@
                     if (!options.group || !options.form || !options.base) {
                         throw new Error("This form button is incomplete. Ask the GM to run sync.");
                     }
-                    await shift(msg, options.group, options.form, options.base);
+                    await shift(msg, slug(options.group), options.form, options.base);
+                    return;
+                }
+                if (command === "damage" || command === "heal") {
+                    if (args.length !== 2) throw new Error(`Use !wildshape ${command} Tylen 10.`);
+                    await changeHealth(msg, slug(args[0]), args[1], command === "damage");
                     return;
                 }
                 help(msg.playerid);
@@ -724,8 +1080,9 @@
         }
 
         let syncTimer;
+        let ready = false;
         function scheduleSync() {
-            if (syncTimer) {
+            if (!ready || syncTimer) {
                 return;
             }
             syncTimer = api.setTimeout(() => {
@@ -736,8 +1093,9 @@
 
         function start() {
             stateRoot();
-            api.on("ready", () => {
-                syncAll();
+            api.on("ready", async () => {
+                ready = true;
+                await syncAll();
                 api.log(`${SCRIPT_NAME} v${VERSION} ready`);
             });
             api.on("chat:message", handleChat);
@@ -745,6 +1103,17 @@
             api.on("add:character", scheduleSync);
             api.on("destroy:character", scheduleSync);
             api.on("change:character:name", scheduleSync);
+            api.on("change:attribute", healthAttributeChanged);
+            api.on("add:graphic", (token) => {
+                if (!ready) return;
+                const id = token.get("represents");
+                const owner = stateRoot().formOwners[id];
+                const main = Object.values(stateRoot().groups).some((group) => group.baseCharacterIds.includes(id)) && is2024(id);
+                if (owner || main) {
+                    return queued(owner || id, () => shareHealth(owner || id))
+                        .catch((error) => api.log(`${SCRIPT_NAME}: Health sync failed: ${error.message}`));
+                }
+            });
             api.on("destroy:graphic", (token) => {
                 delete stateRoot().tokens[token.id];
             });
@@ -759,7 +1128,8 @@
             shift,
             start,
             stateRoot,
-            syncGroup
+            syncGroup,
+            syncStats2024
         };
     }
 
@@ -771,6 +1141,8 @@
             createObj,
             findObjs,
             getObj,
+            getComputed: typeof getComputed === "function" ? getComputed : undefined,
+            setComputed: typeof setComputed === "function" ? setComputed : undefined,
             log,
             on,
             playerIsGM,
