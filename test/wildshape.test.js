@@ -277,6 +277,23 @@ test("adds Human and animal buttons to both base character sheets", () => {
     }
 });
 
+test("names each animal sheet for its player but keeps short button names", () => {
+    const game = tylenGame();
+    game.objects.get("wolf").set("name", "Tylen - Wolf");
+    const mod = createWildShapeMod(game.env);
+
+    mod.setupGroup("Tylen", ["Tylen 2024"]);
+
+    assert.equal(game.objects.get("boar").get("name"), "Tylen-Boar");
+    assert.equal(game.objects.get("wolf").get("name"), "Tylen-Wolf");
+    const names = game.env.findObjs({ _type: "ability", _characterid: "tylen-2024" })
+        .map((ability) => ability.get("name"));
+    assert.deepEqual(names, ["Human", "Boar", "Wolf"]);
+
+    mod.syncGroup("tylen");
+    assert.equal(game.objects.get("wolf").get("name"), "Tylen-Wolf");
+});
+
 test("removes a managed button when its character leaves the folder", () => {
     const game = tylenGame();
     const mod = createWildShapeMod(game.env);
@@ -316,7 +333,8 @@ test("changes to an animal, returns to Human, and remembers each form's bars", a
 
     await mod.shift(msg, "tylen", "wolf", "tylen-2014");
     assert.equal(token.get("represents"), "wolf");
-    assert.equal(token.get("name"), "Wolf");
+    assert.equal(game.objects.get("wolf").get("name"), "Tylen-Wolf");
+    assert.equal(token.get("name"), "Tylen-Wolf");
     assert.equal(token.get("bar1_value"), 7);
     assert.deepEqual(game.formChanges[0], {
         playerId: "player-1",
@@ -324,7 +342,7 @@ test("changes to an animal, returns to Human, and remembers each form's bars", a
         characterId: "tylen-2014",
         characterName: "Tylen",
         tokenId: "token-1",
-        tokenName: "Wolf",
+        tokenName: "Tylen-Wolf",
         fromForm: "Human",
         toForm: "Wolf"
     });

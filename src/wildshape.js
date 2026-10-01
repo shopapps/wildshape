@@ -10,7 +10,7 @@
     "use strict";
 
     const SCRIPT_NAME = "WildShape Next";
-    const VERSION = "0.5.0";
+    const VERSION = "0.6.0";
     const STATE_KEY = "WildShapeNext";
     const ABILITY_MARKER = "Managed by WildShape Next";
 
@@ -221,6 +221,31 @@
             return `${ABILITY_MARKER}: ${groupId}`;
         }
 
+        function groupCharacterName(group) {
+            const folder = findFolder(group.folder);
+            return String(folder ? folder.n : group.folder.split("/").pop()).trim();
+        }
+
+        function formName(group, form) {
+            const characterName = String(form.get("name") || "").trim();
+            const ownerName = groupCharacterName(group);
+            const hyphen = characterName.indexOf("-");
+            const prefixed = hyphen !== -1
+                && characterName.slice(0, hyphen).trim().toLowerCase() === ownerName.toLowerCase();
+            return prefixed ? characterName.slice(hyphen + 1).trim() : characterName;
+        }
+
+        function syncFormNames(group, forms) {
+            const ownerName = groupCharacterName(group);
+
+            forms.forEach((form) => {
+                const wantedName = `${ownerName}-${formName(group, form)}`;
+                if (form.get("name") !== wantedName) {
+                    form.set("name", wantedName);
+                }
+            });
+        }
+
         function managedAbilities(characterId, groupId) {
             return api.findObjs({ _type: "ability", _characterid: characterId })
                 .filter((ability) => ability.get("description") === marker(groupId));
@@ -240,7 +265,7 @@
 
             forms.forEach((form) => {
                 rows.push({
-                    name: form.get("name"),
+                    name: formName(group, form),
                     action: `!wildshape shift --group ${group.id} --form ${form.id} --base ${baseCharacterId}`
                 });
             });
@@ -319,6 +344,7 @@
             }
 
             const forms = characterForms(group.folder);
+            syncFormNames(group, forms);
             group.formCharacterIds = forms.map((form) => form.id);
             group.baseCharacterIds = group.baseCharacterIds.filter((id) => api.getObj("character", id));
             syncFormControllers(group, forms);
@@ -601,9 +627,10 @@
             saved.forms[saved.currentForm] = captureToken(token);
             saved.baseCharacterId = baseCharacterId;
             const previousKey = saved.currentForm;
+            const previousCharacter = api.getObj("character", saved.currentForm);
             const previousForm = saved.currentForm.startsWith("human:")
                 ? "Human"
-                : api.getObj("character", saved.currentForm)?.get("name") || "Unknown";
+                : previousCharacter ? formName(group, previousCharacter) : "Unknown";
             const targetKey = isHuman ? `human:${baseCharacterId}` : targetCharacter.id;
             const snapshot = saved.forms[targetKey] || await defaultSnapshot(targetCharacter);
             if (!validImage(snapshot)) {
@@ -623,7 +650,7 @@
                         tokenId: token.id,
                         tokenName: token.get("name"),
                         fromForm: previousForm,
-                        toForm: isHuman ? "Human" : targetCharacter.get("name")
+                        toForm: isHuman ? "Human" : formName(group, targetCharacter)
                     });
                 } catch (error) {
                     api.log(`${SCRIPT_NAME}: Could not report form change: ${error.message}`);

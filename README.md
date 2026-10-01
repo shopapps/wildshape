@@ -7,8 +7,8 @@ character to the folder, then sync, and its button appears. Remove it, then
 sync, and its button goes away.
 
 The Mod changes the token and keeps each animal's player control in step with
-the base character. It does not rewrite character stats. This makes it safer
-to use with both the 2014 and 2024 D&D sheets.
+the base character. It does not rewrite character stats. It works with the
+Roll20 D&D 2024 sheet and its **Advanced Tools > Character Macros** list.
 
 When AI Co-GM Telemetry is installed, each successful form change is also sent
 to the campaign dashboard's **Latest** activity list.
@@ -18,8 +18,9 @@ to the campaign dashboard's **Latest** activity list.
 The live game currently uses:
 
 - Journal folder: `Tylen`
-- Base character: `Tylen`
-- Animal copies: `Boar`, `Giant Constrictor Snake`, `Spider`, and `Wolf`
+- Base character: `Tylen` (the D&D 2024 sheet)
+- Animal copies: `Tylen-Boar`, `Tylen-Giant Constrictor Snake`,
+  `Tylen-Spider`, and `Tylen-Wolf`
 
 The source characters named `Tylen - Animal` stay outside the folder.
 
@@ -30,7 +31,7 @@ chat as the GM:
 !wildshape setup --folder "Tylen" --base "Tylen"
 ```
 
-This adds these character Abilities:
+This adds these Character Macros:
 
 - Human
 - Boar
@@ -38,14 +39,12 @@ This adds these character Abilities:
 - Spider
 - Wolf
 
-They also appear as token actions when the character's token is selected.
+They appear under **Advanced Tools > Character Macros**. They also appear as
+token actions when the character's token is selected.
 
-`Tylen 2024` is not set up yet. To add it later while keeping the current
-buttons on `Tylen`, run:
-
-```text
-!wildshape setup --folder "Tylen" --base "Tylen" --base "Tylen 2024"
-```
+Sync gives each animal sheet a player-specific name. The `Tylen` folder name
+is used as the prefix, so `Wolf` and `Tylen - Wolf` both become `Tylen-Wolf`.
+The button still says `Wolf`.
 
 When the folder changes, the Mod tries to sync on its own. The GM can also run:
 
@@ -62,8 +61,8 @@ The older command still works too:
 This scans the `Tylen` folder again. It adds new form buttons and removes form
 buttons whose characters are no longer in the folder. It also gives every
 animal in the folder the same **Can Be Edited & Controlled By** players as the
-base character. If more than one base character is set up, their player lists
-are joined.
+base character, and fixes the player-specific animal sheet names. If more than
+one base character is set up, their player lists are joined.
 
 Roll20 may keep an open character sheet showing its old button list. Close and
 reopen the sheet after syncing to see newly added buttons. The Mod privately
